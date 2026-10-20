@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Laundry Management</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; margin: 0; background: #f2f5f9; color: #222; }
+  header { background: #1f4e79; color: #fff; padding: 14px 24px; font-size: 20px; }
+  nav { background: #fff; border-bottom: 1px solid #d5dbe3; display: flex; gap: 4px; padding: 0 16px; }
+  nav button { border: none; background: none; padding: 12px 18px; font-size: 15px; cursor: pointer; border-bottom: 3px solid transparent; }
+  nav button.active { border-bottom-color: #1f4e79; font-weight: bold; color: #1f4e79; }
+  main { max-width: 1000px; margin: 20px auto; padding: 0 16px; }
+  section { display: none; background: #fff; border-radius: 8px; padding: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  section.active { display: block; }
+  h2 { margin-top: 0; font-size: 18px; }
+  form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; align-items: flex-end; }
+  label { display: flex; flex-direction: column; font-size: 12px; color: #555; gap: 3px; }
+  input, select { padding: 8px; border: 1px solid #bbb; border-radius: 4px; font-size: 14px; min-width: 150px; }
+  button.primary { background: #1f4e79; color: #fff; border: none; padding: 9px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+  button.small { padding: 4px 9px; font-size: 12px; border: 1px solid #999; background: #fff; border-radius: 3px; cursor: pointer; }
+  button.danger { color: #b00020; border-color: #b00020; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid #e3e7ec; }
+  th { background: #eef2f7; }
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 12px; color: #fff; }
+  .RECEIVED { background: #6c757d; } .WASHING { background: #0d6efd; }
+  .READY { background: #fd7e14; } .DELIVERED { background: #198754; }
+  #msg { position: fixed; top: 12px; right: 12px; padding: 10px 16px; border-radius: 4px; color: #fff; display: none; max-width: 380px; z-index: 5; }
+  #msg.ok { background: #198754; } #msg.err { background: #b00020; }
+  .empty { color: #888; padding: 10px 0; }
+</style>
+</head>
+<body>
+<header>🧺 Laundry Management System</header>
+<nav>
+  <button class="active" data-tab="customers">Customers</button>
+  <button data-tab="services">Services</button>
+  <button data-tab="orders">Orders</button>
+  <button data-tab="reports">Reports</button>
+</nav>
+<div id="msg"></div>
+<main>
+
+  <!-- CUSTOMERS (Member 1) -->
+  <section id="customers" class="active">
+    <h2>Customers</h2>
+    <form id="customerForm">
+      <input type="hidden" id="cId">
+      <label>Name<input id="cName" required></label>
+      <label>Phone (10 digits)<input id="cPhone" required maxlength="10"></label>
+      <label>Email<input id="cEmail" type="email"></label>
+      <label>Address<input id="cAddress"></label>
+      <button class="primary" type="submit" id="cSubmit">Add Customer</button>
+      <button class="small" type="button" id="cCancel" style="display:none">Cancel edit</button>
+    </form>
+    <div id="customerTable"></div>
+  </section>
+
+  <!-- SERVICES (Member 2) -->
+  <section id="services">
+    <h2>Laundry Services</h2>
+    <form id="serviceForm">
+      <input type="hidden" id="sId">
+      <label>Service name<input id="sName" required></label>
+      <label>Price (₹)<input id="sPrice" type="number" step="0.01" min="0.01" required></label>
+      <button class="primary" type="submit" id="sSubmit">Add Service</button>
+      <button class="small" type="button" id="sCancel" style="display:none">Cancel edit</button>
+    </form>
+    <div id="serviceTable"></div>
+  </section>
+
+  <!-- ORDERS (Member 3) -->
+  <section id="orders">
+    <h2>Orders</h2>
+    <form id="orderForm">
+      <label>Customer<select id="oCustomer" required></select></label>
+      <label>Service<select id="oService" required></select></label>
+      <label>Quantity<input id="oQty" type="number" min="1" value="1" required></label>
+      <button class="primary" type="submit">Create Order</button>
+    </form>
+    <div id="orderTable"></div>
+  </section>
+
+  <!-- REPORTS (Member 3, JDBC) -->
+  <section id="reports">
+    <h2>Orders by status</h2>
+    <div id="summaryTable"></div>
+    <h2 style="margin-top:24px">Spending per customer</h2>
+    <div id="spendTable"></div>
+  </section>
+</main>
+
+<script>
+const API = '/api';
+
+// ---------- helpers ----------
+async function api(path, method = 'GET', body) {
+  const res = await fetch(API + path, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined
+  });
+  if (res.status === 204) return null;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    let text = data.message || 'Request failed';
+    if (data.errors) text += ': ' + Object.values(data.errors).join(', ');
+    throw new Error(text);
+  }
+  return data;
+}
+function toast(text, ok = true) {
+  const m = document.getElementById('msg');
+  m.textContent = text; m.className = ok ? 'ok' : 'err'; m.style.display = 'block';
+  setTimeout(() => m.style.display = 'none', 3500);
+}
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function table(headers, rows) {
+  if (!rows.length) return '<div class="empty">No records yet.</div>';
+  return '<table><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr>' +
+         rows.map(r => '<tr>' + r.map(c => `<td>${c}</td>`).join('') + '</tr>').join('') + '</table>';
+}
+async function run(fn) { try { await fn(); } catch (e) { toast(e.message, false); } }
+const $ = id => document.getElementById(id);
+
+// ---------- tabs ----------
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('section').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  $(b.dataset.tab).classList.add('active');
+  loaders[b.dataset.tab]();
+});
+
+// ---------- customers ----------
+let customersCache = [];
+async function loadCustomers() {
+  customersCache = await api('/customers');
+  $('customerTable').innerHTML = table(['ID','Name','Phone','Email','Address',''],
+    customersCache.map(c => [c.id, esc(c.name), esc(c.phone), esc(c.email), esc(c.address),
+      `<button class="small" onclick="editCustomer(${c.id})">Edit</button>
+       <button class="small danger" onclick="deleteCustomer(${c.id})">Delete</button>`]));
+}
+function editCustomer(id) {
+  const c = customersCache.find(x => x.id === id);
+  $('cId').value = c.id; $('cName').value = c.name; $('cPhone').value = c.phone;
+  $('cEmail').value = c.email || ''; $('cAddress').value = c.address || '';
+  $('cSubmit').textContent = 'Update Customer'; $('cCancel').style.display = '';
+}
+function resetCustomerForm() {
+  $('customerForm').reset(); $('cId').value = '';
+  $('cSubmit').textContent = 'Add Customer'; $('cCancel').style.display = 'none';
+}
+$('cCancel').onclick = resetCustomerForm;
+$('customerForm').onsubmit = e => { e.preventDefault(); run(async () => {
+  const body = { name: $('cName').value, phone: $('cPhone').value, email: $('cEmail').value || null, address: $('cAddress').value };
+  const id = $('cId').value;
+  await api(id ? '/customers/' + id : '/customers', id ? 'PUT' : 'POST', body);
+  toast(id ? 'Customer updated' : 'Customer added');
+  resetCustomerForm(); await loadCustomers();
+}); };
+function deleteCustomer(id) { if (confirm('Delete this customer?')) run(async () => {
+  await api('/customers/' + id, 'DELETE'); toast('Customer deleted'); await loadCustomers();
+}); }
+
+// ---------- services ----------
+let servicesCache = [];
+async function loadServices() {
+  servicesCache = await api('/services');
+  $('serviceTable').innerHTML = table(['ID','Service','Price (₹)',''],
+    servicesCache.map(s => [s.id, esc(s.serviceName), s.price,
+      `<button class="small" onclick="editService(${s.id})">Edit</button>
+       <button class="small danger" onclick="deleteService(${s.id})">Delete</button>`]));
+}
+function editService(id) {
+  const s = servicesCache.find(x => x.id === id);
+  $('sId').value = s.id; $('sName').value = s.serviceName; $('sPrice').value = s.price;
+  $('sSubmit').textContent = 'Update Service'; $('sCancel').style.display = '';
+}
+function resetServiceForm() {
+  $('serviceForm').reset(); $('sId').value = '';
+  $('sSubmit').textContent = 'Add Service'; $('sCancel').style.display = 'none';
+}
+$('sCancel').onclick = resetServiceForm;
+$('serviceForm').onsubmit = e => { e.preventDefault(); run(async () => {
+  const body = { serviceName: $('sName').value, price: $('sPrice').value };
+  const id = $('sId').value;
+  await api(id ? '/services/' + id : '/services', id ? 'PUT' : 'POST', body);
+  toast(id ? 'Service updated' : 'Service added');
+  resetServiceForm(); await loadServices();
+}); };
+function deleteService(id) { if (confirm('Delete this service?')) run(async () => {
+  await api('/services/' + id, 'DELETE'); toast('Service deleted'); await loadServices();
+}); }
+
+// ---------- orders ----------
+const NEXT = { RECEIVED: 'WASHING', WASHING: 'READY', READY: 'DELIVERED' };
+async function loadOrders() {
+  const [customers, services, orders] = await Promise.all([api('/customers'), api('/services'), api('/orders')]);
+  $('oCustomer').innerHTML = customers.map(c => `<option value="${c.id}">${esc(c.name)} (${esc(c.phone)})</option>`).join('');
+  $('oService').innerHTML = services.map(s => `<option value="${s.id}">${esc(s.serviceName)} - ₹${s.price}</option>`).join('');
+  $('orderTable').innerHTML = table(['Order','Customer','Service','Qty','Total (₹)','Status','Date',''],
+    orders.map(o => [o.id, esc(o.customerName), esc(o.serviceName), o.quantity, o.totalAmount,
+      `<span class="badge ${o.status}">${o.status}</span>`,
+      new Date(o.orderDate).toLocaleString(),
+      (NEXT[o.status] ? `<button class="small" onclick="advance(${o.id}, '${NEXT[o.status]}')">→ ${NEXT[o.status]}</button> ` : '') +
+      (o.status === 'RECEIVED' ? `<button class="small danger" onclick="cancelOrder(${o.id})">Cancel</button>` : '')]));
+}
+$('orderForm').onsubmit = e => { e.preventDefault(); run(async () => {
+  await api('/orders', 'POST', { customerId: +$('oCustomer').value, serviceId: +$('oService').value, quantity: +$('oQty').value });
+  toast('Order created'); $('oQty').value = 1; await loadOrders();
+}); };
+function advance(id, status) { run(async () => {
+  await api(`/orders/${id}/status`, 'PUT', { status }); toast('Status changed to ' + status); await loadOrders();
+}); }
+function cancelOrder(id) { if (confirm('Cancel this order?')) run(async () => {
+  await api('/orders/' + id, 'DELETE'); toast('Order cancelled'); await loadOrders();
+}); }
+
+// ---------- reports (plain JDBC endpoints) ----------
+async function loadReports() {
+  const [sum, spend] = await Promise.all([api('/reports/summary'), api('/reports/customers')]);
+  $('summaryTable').innerHTML = table(['Status','Orders','Amount (₹)'],
+    sum.map(r => [`<span class="badge ${r.status}">${r.status}</span>`, r.total_orders, r.total_amount]));
+  $('spendTable').innerHTML = table(['Customer','Orders','Total spent (₹)'],
+    spend.map(r => [esc(r.name), r.total_orders, r.total_spent]));
+}
+
+const loaders = {
+  customers: () => run(loadCustomers), services: () => run(loadServices),
+  orders: () => run(loadOrders), reports: () => run(loadReports)
+};
+loaders.customers();
+</script>
+</body>
+</html>
